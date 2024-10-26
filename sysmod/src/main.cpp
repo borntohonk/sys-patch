@@ -249,10 +249,8 @@ constinit Patterns fs_patterns[] = {
     { "noncasigchk_old", "0x1E42B9", -5, 0, tbz_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(10,0,0), MAKEHOSVERSION(14,2,1) },
     { "noncasigchk_new", "0x3E4479", -5, 0, tbz_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(15,0,0), MAKEHOSVERSION(16,1,0) },
     { "noncasigchk_new2", "0x258052", -5, 0, tbz_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(17,0,0) },
-    { "nocntchk", "0x081C00121F050071..0054", -4, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(10,0,0), MAKEHOSVERSION(19,0,0) },
-    //new good patch tested on fw 19  (thnks mrdude)
-    { "nocntchk_FW19", "0x1C0012.050071..0054..00.60", -9, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(19,0,0) },
-    //
+    { "nocntchk", "0x081C00121F050071..0054", -4, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(10,0,0), MAKEHOSVERSION(18,1,0) },
+    { "nocntchk2", "0x091C00123F05007161010054", -8, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(19,0,0) },
 };
 
 constinit Patterns ldr_patterns[] = {
@@ -265,8 +263,7 @@ constinit Patterns es_patterns[] = {
     { "es3", "0xF3031FAA02000014", -4, 0, bne_cond, nop_patch, nop_applied, true, FW_VER_ANY, MAKEHOSVERSION(10,2,0) },
     { "es4", "0xC0FDFF35A8C35838", -4, 0, mov_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(11,0,0), MAKEHOSVERSION(13,2,1) },
     { "es5", "0xE023009145EEFF97", -4, 0, cbz_cond, b_patch, b_applied, true, MAKEHOSVERSION(11,0,0), MAKEHOSVERSION(13,2,1) },
-    { "es6", "0x..00...0094A0..D1..FF97", 16, 0, mov2_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(14,0,0), MAKEHOSVERSION(18,1,0) },
-    { "es7", "0xFF97..132A...A9........FF.0491C0035FD6", 2, 0, mov2_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(18,0,0), MAKEHOSVERSION(19,0,0) },
+    { "es6", "0x0091..0094a08300D1..FF97", 14, 0, mov2_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(14,0,0), MAKEHOSVERSION(19,0,0) },
 };
 
 constinit Patterns nifm_patterns[] = {
