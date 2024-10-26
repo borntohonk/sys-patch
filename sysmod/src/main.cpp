@@ -162,11 +162,15 @@ constexpr auto mov_cond(u32 inst) -> bool {
 }
 
 constexpr auto mov2_cond(u32 inst) -> bool {
-    if (hosversionBefore(15,0,0)) {
-        return (inst >> 24) == 0x92; // and x0, x19, #0xffffffff
-    } else {
+     if (hosversionBefore(12,0,0) || !hosversionBefore(15,0,0)) {
         return (inst >> 24) == 0x2A; // mov x0, x20
+    } else {
+        return (inst >> 24) == 0x92; // and x0, x19, #0xffffffff
     }
+}
+
+constexpr auto and_cond(u32 inst) -> bool {
+    return ((inst >> 24) & 0x1F) == 0x0A;
 }
 
 constexpr auto adr_cond(u32 inst) -> bool {
@@ -258,12 +262,9 @@ constinit Patterns ldr_patterns[] = {
 };
 
 constinit Patterns es_patterns[] = {
-    { "es1", "0x1F90013128928052", -4, 0, cbz_cond, b_patch, b_applied, true, FW_VER_ANY, MAKEHOSVERSION(13,2,1) },
-    { "es2", "0xC07240F9E1930091", -4, 0, tbz_cond, nop_patch, nop_applied, true, FW_VER_ANY, MAKEHOSVERSION(10,2,0) },
-    { "es3", "0xF3031FAA02000014", -4, 0, bne_cond, nop_patch, nop_applied, true, FW_VER_ANY, MAKEHOSVERSION(10,2,0) },
-    { "es4", "0xC0FDFF35A8C35838", -4, 0, mov_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(11,0,0), MAKEHOSVERSION(13,2,1) },
-    { "es5", "0xE023009145EEFF97", -4, 0, cbz_cond, b_patch, b_applied, true, MAKEHOSVERSION(11,0,0), MAKEHOSVERSION(13,2,1) },
-    { "es6", "0x0091..0094a08300D1..FF97", 14, 0, mov2_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(14,0,0), MAKEHOSVERSION(19,0,0) },
+    { "es1", "0x..00.....e0.0091..0094..4092...d1", 16, 0, and_cond, mov0_patch, mov0_applied, true, FW_VER_ANY, MAKEHOSVERSION(2,2,0) },
+    { "es2", "0x..00.....e0.0091..0094..4092...a9", 16, 0, and_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(2,0,0), MAKEHOSVERSION(8,1,1) },
+    { "es3", "0x..00...0094a0..d1..ff97.......a9", 16, 0, mov2_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(9,0,0) },//fw9-fw19
 };
 
 constinit Patterns nifm_patterns[] = {
