@@ -169,6 +169,10 @@ constexpr auto mov2_cond(u32 inst) -> bool {
     }
 }
 
+constexpr auto adr_cond(u32 inst) -> bool {
+    return (inst >> 24) == 0x10; // adr x2, LAB
+}
+
 constexpr auto bne_cond(u32 inst) -> bool {
     const auto type = inst >> 24;
     const auto cond = inst & 0x10;
@@ -183,7 +187,10 @@ constexpr auto ctest_cond(u32 inst) -> bool {
 constexpr PatchData ret0_patch_data{ "0xE0031F2A" };
 constexpr PatchData ret1_patch_data{ "0x10000014" };
 constexpr PatchData nop_patch_data{ "0x1F2003D5" };
+//mov x0, xzr
 constexpr PatchData mov0_patch_data{ "0xE0031FAA" };
+//mov x2, xzr
+constexpr PatchData mov2_patch_data{ "0xE2031FAA" };
 constexpr PatchData ctest_patch_data{ "0x00309AD2001EA1F2610100D4E0031FAAC0035FD6" };
 
 constexpr auto ret0_patch(u32 inst) -> PatchData { return ret0_patch_data; }
@@ -191,6 +198,7 @@ constexpr auto ret1_patch(u32 inst) -> PatchData { return ret1_patch_data; }
 constexpr auto nop_patch(u32 inst) -> PatchData { return nop_patch_data; }
 constexpr auto subs_patch(u32 inst) -> PatchData { return subi_cond(inst) ? (u8)0x1 : (u8)0x0; }
 constexpr auto mov0_patch(u32 inst) -> PatchData { return mov0_patch_data; }
+constexpr auto mov2_patch(u32 inst) -> PatchData { return mov2_patch_data; }
 constexpr auto ctest_patch(u32 inst) -> PatchData { return ctest_patch_data; }
 
 constexpr auto b_patch(u32 inst) -> PatchData {
@@ -227,6 +235,10 @@ constexpr auto mov0_applied(const u8* data, u32 inst) -> bool {
     return mov0_patch(inst).cmp(data);
 }
 
+constexpr auto mov2_applied(const u8* data, u32 inst) -> bool {
+    return mov2_patch(inst).cmp(data);
+}
+
 constexpr auto ctest_applied(const u8* data, u32 inst) -> bool {
     return ctest_patch(inst).cmp(data);
 }
@@ -261,6 +273,11 @@ constinit Patterns nifm_patterns[] = {
     { "ctest", "....................F40300AA....F30314AAE00314AA9F0201397F8E04F8", 16, -16, ctest_cond, ctest_patch, ctest_applied, true },
 };
 
+constinit Patterns nim_patterns[] = {
+    { "nim1", "0x800F00351F2003D5", 8, 0, adr_cond, mov2_patch, mov2_applied, true, MAKEHOSVERSION(17,0,0), MAKEHOSVERSION(18,1,0) },
+    { "nim2", "0x600F00351F2003D5", 8, 0, adr_cond, mov2_patch, mov2_applied, true, MAKEHOSVERSION(19,0,0) },
+};
+
 // NOTE: add system titles that you want to be patched to this table.
 // a list of system titles can be found here https://switchbrew.org/wiki/Title_list
 constinit PatchEntry patches[] = {
@@ -270,6 +287,7 @@ constinit PatchEntry patches[] = {
     // es was added in fw 2
     { "es", 0x0100000000000033, es_patterns, MAKEHOSVERSION(2,0,0) },
     { "nifm", 0x010000000000000F, nifm_patterns },
+    { "nim", 0x0100000000000025, nim_patterns },
 };
 
 struct EmummcPaths {
