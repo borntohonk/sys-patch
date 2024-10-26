@@ -272,8 +272,8 @@ constinit Patterns nifm_patterns[] = {
 };
 
 constinit Patterns nim_patterns[] = {
-    { "nim1", "0x800F00351F2003D5", 8, 0, adr_cond, mov2_patch, mov2_applied, true, MAKEHOSVERSION(17,0,0), MAKEHOSVERSION(18,1,0) },
-    { "nim2", "0x600F00351F2003D5", 8, 0, adr_cond, mov2_patch, mov2_applied, true, MAKEHOSVERSION(19,0,0) },
+    { "nim", "0x.0F00351F2003D5", 8, 0, adr_cond, mov2_patch, mov2_applied, true, MAKEHOSVERSION(17,0,0) },
+   // { "nim2", "0x600F00351F2003D5", 8, 0, adr_cond, mov2_patch, mov2_applied, true, MAKEHOSVERSION(19,0,0) },
 };
 
 // NOTE: add system titles that you want to be patched to this table.
