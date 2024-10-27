@@ -1,6 +1,6 @@
 # sys-patch
 
-A script-like system module that patches **fs**, **es**, **ldr** and **nifm** on boot.
+A script-like system module that patches **fs**, **es**, **ldr**, **nifm** and **nim** on boot.
 
 ---
 
@@ -61,10 +61,12 @@ Here's a quick run down of what's being patched:
 - **es**
 - **ldr**
 - **nifm**
+- **nim**
 
 **fs** and **es** need new patches after every new firmware version.
 **ldr** needs new patches after every new [Atmosphere](https://github.com/Atmosphere-NX/Atmosphere/) release.
 **nifm** ctest patch allows the device to connect to a network without needing to make a connection to a server.
+**nim** patch prevents a crash on connect that users with blanked prodinfo experience due to a cert failing verification.
 
 The patches are applied on boot. Once done, the sys-module stops running.
 The memory footprint *(16kib)* and the binary size *(~50kib)* are both very small.
