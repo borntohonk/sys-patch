@@ -66,7 +66,7 @@ Here's a quick run down of what's being patched:
 **fs** and **es** need new patches after every new firmware version.
 **ldr** needs new patches after every new [Atmosphere](https://github.com/Atmosphere-NX/Atmosphere/) release.
 **nifm** ctest patch allows the device to connect to a network without needing to make a connection to a server.
-**nim** patch prevents a crash on connect that users with blanked prodinfo experience due to a cert failing verification.
+**nim** patch prevents a forced crash that users with blanked prodinfo experience on connect due to their SSL cert not being intact.
 
 The patches are applied on boot. Once done, the sys-module stops running.
 The memory footprint *(16kib)* and the binary size *(~50kib)* are both very small.
