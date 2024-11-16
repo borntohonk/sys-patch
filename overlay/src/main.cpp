@@ -141,9 +141,9 @@ public:
     ConfigEntry config_es3{"es", "es3", true};
     ConfigEntry config_ctest{"nifm", "ctest", true};
     ConfigEntry config_nim{"nim", "nim", true};
-    ConfigEntry config_ssl1{"disablecaverification1", "disablecaverification1", false};
-    ConfigEntry config_ssl2{"disablecaverification2", "disablecaverification2", false};
-    ConfigEntry config_ssl3{"disablecaverification3", "disablecaverification3", false};
+    ConfigEntry config_ssl1{"ssl", "disablecaverification1", false};
+    ConfigEntry config_ssl2{"ssl", "disablecaverification2", false};
+    ConfigEntry config_ssl3{"ssl", "disablecaverification3", false};
 };
 
 class GuiLog final : public tsl::Gui {
