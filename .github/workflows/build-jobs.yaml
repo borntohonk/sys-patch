@@ -20,7 +20,7 @@ jobs:
 
     - name: Build sys-patch
       run: |
-        make -C sys-patch -j$(nproc) && \
+        make -C sys-patch -j$(nproc) dist && \
         VERSION=$(grep 'export VERSION := ' sys-patch/Makefile | cut -c 19-)
         TAGVERSION=$(curl -s https://api.github.com/repos/$GITHUB_REPOSITORY/releases/latest | grep "tag_name" | head -1 | cut -d '"' -f 4)
         echo "VERSION=${VERSION}" >> $GITHUB_ENV
@@ -31,7 +31,7 @@ jobs:
       with:
         include-hidden-files: true
         overwrite: true
-        name: sys-patch-${{ env.VERSION }}.zip
+        name: sys-patch-${{ env.VERSION }}
         path: sys-patch/out/
 
     - name: Fetch git cli and upload release
@@ -45,7 +45,8 @@ jobs:
           tar -xzf gh*.tar.gz && \
           chmod +x gh*/bin/gh && \
           chmod +x gh*/bin/gh && \
+          cp gh*/bin/gh /bin/gh && \
           rm gh*.tar.gz && \
           rm -rf gh*
-          gh release create v${{ env.VERSION }} sys-patch.zip --title "Sys-patch version ${{ env.VERSION }}" --repo github.com/$GITHUB_REPOSITORY
+          gh release create v${{ env.VERSION }} sys-patch/sys-patch.zip --title "Sys-patch version ${{ env.VERSION }}" --repo github.com/$GITHUB_REPOSITORY
         fi

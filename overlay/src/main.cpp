@@ -120,6 +120,11 @@ public:
         list->addItem(new tsl::elm::CategoryHeader("NIM - 0100000000000025"));
         list->addItem(config_nim.create_list_item("nim"));
 
+        list->addItem(new tsl::elm::CategoryHeader("Disable CA Verification - apply all"));
+        list->addItem(config_ssl1.create_list_item("disablecaverification1"));
+        list->addItem(config_ssl2.create_list_item("disablecaverification2"));
+        list->addItem(config_ssl3.create_list_item("disablecaverification3"));
+
         frame->setContent(list);
         return frame;
     }
@@ -136,6 +141,9 @@ public:
     ConfigEntry config_es3{"es", "es3", true};
     ConfigEntry config_ctest{"nifm", "ctest", true};
     ConfigEntry config_nim{"nim", "nim", true};
+    ConfigEntry config_ssl1{"disablecaverification1", "disablecaverification1", false};
+    ConfigEntry config_ssl2{"disablecaverification2", "disablecaverification2", false};
+    ConfigEntry config_ssl3{"disablecaverification3", "disablecaverification3", false};
 };
 
 class GuiLog final : public tsl::Gui {
