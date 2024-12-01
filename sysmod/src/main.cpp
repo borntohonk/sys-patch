@@ -141,7 +141,8 @@ constexpr auto subr_cond(u32 inst) -> bool {
 }
 
 constexpr auto bl_cond(u32 inst) -> bool {
-    return ((inst >> 26) & 0x3F) == 0x25;
+    const auto type = inst >> 24;
+    return type == 0x25 || type == 0x94;
 }
 
 constexpr auto tbz_cond(u32 inst) -> bool {
