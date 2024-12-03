@@ -170,7 +170,7 @@ constexpr auto mov2_cond(u32 inst) -> bool {
     }
 }
 
-constexpr auto mov_cond3(u32 inst) -> bool {
+constexpr auto mov3_cond(u32 inst) -> bool {
     return (inst >> 24) == 0xD2; // mov x10, #0x3
 }
 
@@ -300,7 +300,7 @@ constinit Patterns nim_patterns[] = {
 };
 
 constinit Patterns ssl_patterns[] = {
-    { "disablecaverification1", "0x6A0080D2", 0, 0, mov_cond3, ssl1_patch, ssl1_applied, false, FW_VER_ANY },
+    { "disablecaverification1", "0x6A0080D2", 0, 0, mov3_cond, ssl1_patch, ssl1_applied, false, FW_VER_ANY },
     { "disablecaverification2", "0x2409437AA0000054", 4, 0, beq_cond, ret1_patch, ret1_applied, false, FW_VER_ANY },
     { "disablecaverification3", "0x88160012", 4, 0, str_cond, ssl2_patch, ssl2_applied, false, FW_VER_ANY },
 };
