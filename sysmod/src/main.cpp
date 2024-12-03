@@ -410,7 +410,8 @@ auto apply_patch(PatchEntry& patch) -> bool {
 
     u64 pids[0x50]{};
     s32 process_count{};
-    static u8 buffer[READ_BUFFER_SIZE];
+    constexpr u64 overlap_size = 0x4f;
+    static u8 buffer[READ_BUFFER_SIZE + overlap_size];
 
     // skip if version isn't valid
     if (VERSION_SKIP &&
@@ -449,16 +450,27 @@ auto apply_patch(PatchEntry& patch) -> bool {
                     continue;
                 }
 
-                // todo: the byte pattern can in between 2 READ_BUFFER_SIZE boundries!
-                for (u64 sz = 0; sz < mem_info.size; sz += READ_BUFFER_SIZE) {
-                    const auto actual_size = std::min(READ_BUFFER_SIZE, mem_info.size);
-                    if (R_FAILED(svcReadDebugProcessMemory(buffer, handle, mem_info.addr + sz, actual_size))) {
-                        // todo: log failed reads!
+    // u32 overlap_size = 0;
+                // for (const auto& pattern : patch.patterns) {
+                    // overlap_size = std::max(overlap_size, static_cast<u32>(pattern.byte_pattern.size));
+                // }
+                // u8* buffer = (u8*)aligned_alloc(alignof(u8*), READ_BUFFER_SIZE + overlap_size);
+                // if (!buffer) {
+                    // svcCloseHandle(handle);
+                    // return false;
+                // }
+                for (u64 sz = 0; sz < mem_info.size; sz += READ_BUFFER_SIZE - overlap_size) {
+                    const auto actual_size = std::min(READ_BUFFER_SIZE, mem_info.size - sz);
+                    if (R_FAILED(svcReadDebugProcessMemory(buffer + overlap_size, handle, mem_info.addr + sz, actual_size))) {
                         break;
                     } else {
-                        patcher(handle, std::span{buffer, actual_size}, mem_info.addr + sz, patch.patterns);
+                        patcher(handle, std::span{buffer, actual_size + overlap_size}, mem_info.addr + sz - overlap_size, patch.patterns);
+                        if (actual_size >= overlap_size) {
+                            memcpy(buffer, buffer + actual_size, overlap_size);
+                        }
                     }
                 }
+                // free(buffer);
             }
             svcCloseHandle(handle);
             return true;
