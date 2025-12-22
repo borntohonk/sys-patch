@@ -88,6 +88,12 @@ struct PatchData {
     u8 size{};
 };
 
+struct IPSPatch {
+    u32 offset;
+    u8 size;
+    u8 data[20];
+};
+
 enum class PatchResult {
     NOT_FOUND,
     SKIPPED,
@@ -96,6 +102,21 @@ enum class PatchResult {
     PATCHED_SYSPATCH,
     FAILED_WRITE,
 };
+
+
+
+// Helper function to write a 24-bit big-endian value
+auto write_be24(u8* dst, u32 value) -> void {
+    dst[0] = (value >> 16) & 0xFF;
+    dst[1] = (value >> 8) & 0xFF;
+    dst[2] = value & 0xFF;
+}
+
+// Helper function to write a 16-bit big-endian value
+auto write_be16(u8* dst, u16 value) -> void {
+    dst[0] = (value >> 8) & 0xFF;
+    dst[1] = value & 0xFF;
+}
 
 struct Patterns {
     const char* patch_name; // name of patch
@@ -116,6 +137,11 @@ struct Patterns {
     const u32 max_ams_ver{FW_VER_ANY}; // set to FW_VER_ANY to ignore
 
     PatchResult result{PatchResult::NOT_FOUND};
+    
+    // Cache for IPS file generation
+    u32 cached_offset{0};
+    u8 cached_patch_size{0};
+    u8 cached_patch_data[20]{};
 };
 
 struct PatchEntry {
@@ -125,6 +151,8 @@ struct PatchEntry {
     const u32 min_fw_ver{FW_VER_ANY}; // set to FW_VER_ANY to ignore
     const u32 max_fw_ver{FW_VER_ANY}; // set to FW_VER_ANY to ignore
 };
+
+using ModuleID = std::array<u8, 32>;
 
 // naming convention should if possible adhere to either an arm instruction + _cond,
 // example: "bl_cond"
@@ -314,14 +342,20 @@ auto is_emummc() -> bool {
     return (paths.unk[0] != '\0') || (paths.nintendo[0] != '\0');
 }
 
+auto create_dir(const char* path) -> bool;
+auto read_ips_file(const char* path, u8* out_data, u64* out_size) -> bool;
+auto write_ips_file(const char* path, const u8* data, u64 size) -> bool;
+auto create_directories(const char* path) -> bool;
+auto extract_module_id(Handle handle, u64 title_id) -> ModuleID;
+auto generate_ips_files(const PatchEntry& patch, const ModuleID& module_id) -> void;
+auto apply_patch(const PatchEntry& patch, ModuleID& out_module_id) -> bool;
+
 void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::span<Patterns> patterns) {
     for (auto& p : patterns) {
-        // skip if disabled (controller by config.ini)
         if (p.result == PatchResult::DISABLED) {
             continue;
         }
 
-        // skip if version isn't valid
         if (VERSION_SKIP &&
             ((p.min_fw_ver && p.min_fw_ver > FW_VERSION) ||
             (p.max_fw_ver && p.max_fw_ver < FW_VERSION) ||
@@ -331,7 +365,6 @@ void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::spa
             continue;
         }
 
-        // skip if already patched
         if (p.result == PatchResult::PATCHED_FILE || p.result == PatchResult::PATCHED_SYSPATCH) {
             continue;
         }
@@ -341,8 +374,6 @@ void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::spa
                 break;
             }
 
-            // loop through every byte of the pattern data to find a match
-            // skipping over any bytes if the value is REGEX_SKIP
             u32 count{};
             while (count < p.byte_pattern.size) {
                 if (p.byte_pattern.data[count] != data[i + count] && p.byte_pattern.data[count] != REGEX_SKIP) {
@@ -351,25 +382,24 @@ void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::spa
                 count++;
             }
 
-            // if we have found a matching pattern
             if (count == p.byte_pattern.size) {
-                // fetch the instruction
                 u32 inst{};
                 const auto inst_offset = i + p.inst_offset;
                 std::memcpy(&inst, data + inst_offset, sizeof(inst));
 
-                // check if the instruction is the one that we want
                 if (p.cond(inst)) {
                     const auto patch_data = p.patch(inst);
                     const auto patch_offset = addr + inst_offset + p.patch_offset;
 
-                    // todo: log failed writes, although this should in theory never fail
+                    p.cached_offset = patch_offset;
+                    p.cached_patch_size = patch_data.size;
+                    std::memcpy(p.cached_patch_data, patch_data.data, patch_data.size);
+
                     if (R_FAILED(svcWriteDebugProcessMemory(handle, &patch_data, patch_offset, patch_data.size))) {
                         p.result = PatchResult::FAILED_WRITE;
                     } else {
                         p.result = PatchResult::PATCHED_SYSPATCH;
                     }
-                    // move onto next pattern
                     break;
                 } else if (p.applied(data + inst_offset + p.patch_offset, inst)) {
                     // patch already applied by sigpatches
@@ -381,7 +411,111 @@ void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::spa
     }
 }
 
-auto apply_patch(PatchEntry& patch) -> bool {
+auto extract_module_id(Handle handle, u64 title_id) -> ModuleID {
+    ModuleID module_id{};
+    bool is_fs_or_loader = (title_id == 0x0100000000000000ULL || title_id == 0x0100000000000001ULL);
+    
+    if (!is_fs_or_loader) {
+        MemoryInfo mem_info{};
+        u32 page_info{};
+        u64 addr = 0;
+
+        while (R_SUCCEEDED(svcQueryDebugProcessMemory(&mem_info, &page_info, handle, addr))) {
+            addr = mem_info.addr + mem_info.size;
+
+            if (mem_info.type == MemType_CodeStatic && (mem_info.perm & Perm_Rx) == Perm_Rx && mem_info.size > 0x60) {
+                if (R_SUCCEEDED(svcReadDebugProcessMemory(module_id.data(), handle, mem_info.addr + 0x40, module_id.size()))) {
+                    break;
+                }
+            }
+        }
+    }
+    
+    return module_id;
+}
+
+auto generate_ips_files(const PatchEntry& patch, const ModuleID& module_id) -> void {
+    // Check if module_id is empty (all zeros)
+    if (std::all_of(module_id.begin(), module_id.end(), [](u8 b) { return b == 0; })) {
+        return;
+    }
+
+    const char* patch_dir = nullptr;
+    if (patch.title_id == 0x0100000000000033ULL) {
+        patch_dir = "/atmosphere/exefs_patches/es_patches/";
+    } else if (patch.title_id == 0x0100000000000025ULL) {
+        patch_dir = "/atmosphere/exefs_patches/nim_ctest/";
+    } else if (patch.title_id == 0x010000000000000FULL) {
+        patch_dir = "/atmosphere/exefs_patches/nifm_ctest/";
+    }
+
+    if (!patch_dir) {
+        return;
+    }
+
+    char hex_str[65]{};
+    for (int i = 0; i < 32; ++i) {
+        snprintf(hex_str + i * 2, 3, "%02x", module_id[i]);
+    }
+
+    char file_path[FS_MAX_PATH]{};
+    snprintf(file_path, sizeof(file_path), "%s%s.ips", patch_dir, hex_str);
+
+    // Generate IPS data with fixed buffer (256 bytes max for 100 byte IPS files)
+    constexpr u64 IPS_MAX_SIZE = 256;
+    u8 ips_data[IPS_MAX_SIZE]{};
+    u64 ips_size = 0;
+
+    // Write header
+    ips_data[0] = 'P';
+    ips_data[1] = 'A';
+    ips_data[2] = 'T';
+    ips_data[3] = 'C';
+    ips_data[4] = 'H';
+    ips_size = 5;
+
+    // Write patch entries
+    for (const auto& p : patch.patterns) {
+        if (p.cached_patch_size > 0) {
+            if (ips_size + 3 + 2 + p.cached_patch_size + 3 > IPS_MAX_SIZE) {
+                return; // Buffer overflow protection
+            }
+
+            u8 offset_bytes[3];
+            write_be24(offset_bytes, p.cached_offset);
+            std::memcpy(ips_data + ips_size, offset_bytes, 3);
+            ips_size += 3;
+
+            u8 size_bytes[2];
+            write_be16(size_bytes, p.cached_patch_size);
+            std::memcpy(ips_data + ips_size, size_bytes, 2);
+            ips_size += 2;
+
+            std::memcpy(ips_data + ips_size, p.cached_patch_data, p.cached_patch_size);
+            ips_size += p.cached_patch_size;
+        }
+    }
+
+    // Write footer
+    ips_data[ips_size] = 'E';
+    ips_data[ips_size + 1] = 'O';
+    ips_data[ips_size + 2] = 'F';
+    ips_size += 3;
+
+    // Check if file exists and matches
+    u8 existing_data[IPS_MAX_SIZE]{};
+    u64 existing_size = 0;
+    bool file_exists_and_matches = read_ips_file(file_path, existing_data, &existing_size) &&
+                                  existing_size == ips_size &&
+                                  std::memcmp(existing_data, ips_data, ips_size) == 0;
+
+    if (!file_exists_and_matches) {
+        create_directories(patch_dir);
+        write_ips_file(file_path, ips_data, ips_size);
+    }
+}
+
+auto apply_patch(const PatchEntry& patch, ModuleID& out_module_id) -> bool {
     Handle handle{};
     DebugEventInfo event_info{};
 
@@ -391,6 +525,7 @@ auto apply_patch(PatchEntry& patch) -> bool {
     static u8 buffer[READ_BUFFER_SIZE + overlap_size];
 
     std::memset(buffer, 0, sizeof(buffer));
+    out_module_id.fill(0);
 
     // skip if version isn't valid
     if (VERSION_SKIP &&
@@ -410,7 +545,13 @@ auto apply_patch(PatchEntry& patch) -> bool {
         if (R_SUCCEEDED(svcDebugActiveProcess(&handle, pids[i])) &&
             R_SUCCEEDED(svcGetDebugEvent(&event_info, handle)) &&
             patch.title_id == event_info.title_id) {
+            
+            // Extract module ID for non-FS/Loader modules
+            out_module_id = extract_module_id(handle, patch.title_id);
+            std::memset(buffer, 0, sizeof(buffer));
+            
             MemoryInfo mem_info{};
+
             u64 addr{};
             u32 page_info{};
 
@@ -455,7 +596,6 @@ auto apply_patch(PatchEntry& patch) -> bool {
     return false;
 }
 
-// creates a directory, non-recursive!
 auto create_dir(const char* path) -> bool {
     Result rc{};
     FsFileSystem fs{};
@@ -471,7 +611,182 @@ auto create_dir(const char* path) -> bool {
     return R_SUCCEEDED(rc);
 }
 
-// same as ini_get but writes out the default value instead
+struct IpsFile {
+    FsFileSystem system{};
+    FsFile file{};
+};
+
+static void ips_tempname(char* dest, const char* source, int maxlength) {
+    int len = snprintf(dest, maxlength, "%s.tmp", source);
+    if (len < 0 || len >= maxlength) {
+        dest[0] = '\0';
+    }
+}
+
+static bool ips_rename(const char* src, const char* dst) {
+    Result rc = {};
+    FsFileSystem fs = {};
+    char src_buf[FS_MAX_PATH] = {};
+    char dst_buf[FS_MAX_PATH] = {};
+
+    if (R_FAILED(rc = fsOpenSdCardFileSystem(&fs))) {
+        return false;
+    }
+
+    strcpy(src_buf, src);
+    strcpy(dst_buf, dst);
+    rc = fsFsRenameFile(&fs, src_buf, dst_buf);
+    fsFsClose(&fs);
+    return R_SUCCEEDED(rc);
+}
+
+static bool ips_delete(const char* filename) {
+    Result rc = {};
+    FsFileSystem fs = {};
+    char filename_buf[FS_MAX_PATH] = {};
+
+    if (R_FAILED(rc = fsOpenSdCardFileSystem(&fs))) {
+        return false;
+    }
+
+    strncpy(filename_buf, filename, sizeof(filename_buf) - 1);
+    rc = fsFsDeleteFile(&fs, filename_buf);
+    fsFsClose(&fs);
+    return R_SUCCEEDED(rc);
+}
+
+static void ips_close(IpsFile* f) {
+    fsFileClose(&f->file);
+    fsFsClose(&f->system);
+
+    f->file = {};
+    f->system = {};
+}
+
+static bool ips_open(const char* path, IpsFile* out, u32 mode) {
+    Result rc = 0;
+    char path_buf[FS_MAX_PATH] = {0};
+
+    if (R_FAILED(rc = fsOpenSdCardFileSystem(&out->system))) {
+        return false;
+    }
+
+    strncpy(path_buf, path, sizeof(path_buf) - 1);
+
+    rc = fsFsOpenFile(&out->system, path_buf, mode, &out->file);
+    if (R_SUCCEEDED(rc)) {
+        return true;
+    }
+
+    if ((mode & FsOpenMode_Write)) {
+        if (R_FAILED(fsFsCreateFile(&out->system, path_buf, 0, 0))) {
+            fsFsClose(&out->system);
+            out->system = {};
+            return false;
+        }
+        if (R_FAILED(rc = fsFsOpenFile(&out->system, path_buf, mode, &out->file))) {
+            fsFsClose(&out->system);  // ← Close on failure
+            out->system = {};
+            return false;
+        }
+    } else {
+        fsFsClose(&out->system);
+        out->system = {};
+        return false;
+    }
+    
+    return true;
+}
+
+auto read_ips_file(const char* path, u8* out_data, u64* out_size) -> bool {
+    IpsFile ips{};
+    if (!ips_open(path, &ips, FsOpenMode_Read)) {
+        return false;
+    }
+
+    s64 file_size = 0;
+    if (R_FAILED(fsFileGetSize(&ips.file, &file_size)) || file_size <= 0 || file_size > 256) {
+        ips_close(&ips);
+        return false;
+    }
+
+    u64 bytes_read = 0;
+    Result rc = fsFileRead(&ips.file, 0, out_data, static_cast<u64>(file_size), FsReadOption_None, &bytes_read);
+
+    ips_close(&ips);
+
+    if (R_SUCCEEDED(rc) && bytes_read == static_cast<u64>(file_size)) {
+        *out_size = bytes_read;
+        return true;
+    }
+    return false;
+}
+
+auto write_ips_file(const char* path, const u8* data, u64 size) -> bool {
+    if (size == 0 || !path || path[0] == '\0') {
+        return false;
+    }
+
+    char temp_path[FS_MAX_PATH] = {};
+    ips_tempname(temp_path, path, sizeof(temp_path));
+    if (temp_path[0] == '\0') {
+        return false;
+    }
+
+    IpsFile ips{};
+    if (!ips_open(temp_path, &ips, FsOpenMode_Write | FsOpenMode_Append)) {
+        return false;
+    }
+
+    if (R_FAILED(fsFileSetSize(&ips.file, size))) {
+        ips_close(&ips);
+        ips_delete(temp_path);
+        return false;
+    }
+
+    Result rc = fsFileWrite(&ips.file, 0, const_cast<u8*>(data), size, FsWriteOption_Flush);
+    ips_close(&ips);
+
+    if (!R_SUCCEEDED(rc)) {
+        ips_delete(temp_path);
+        return false;
+    }
+
+    if (!ips_rename(temp_path, path)) {
+        ips_delete(temp_path);
+        return false;
+    }
+
+    return true;
+}
+
+auto create_directories(const char* path) -> bool {
+    if (!path || path[0] != '/') return false;
+
+    FsFileSystem fs{};
+    if (R_FAILED(fsOpenSdCardFileSystem(&fs))) {
+        return false;
+    }
+
+    char tmp[FS_MAX_PATH]{};
+    strncpy(tmp, path, sizeof(tmp) - 1);
+
+    char* p = tmp + 1;
+    while (*p) {
+        if (*p == '/') {
+            *p = '\0';
+            fsFsCreateDirectory(&fs, tmp);
+            *p = '/';
+        }
+        p++;
+    }
+
+
+    Result rc = fsFsCreateDirectory(&fs, tmp);
+    fsFsClose(&fs);
+    return R_SUCCEEDED(rc) || rc == 0x402;
+}
+
 auto ini_load_or_write_default(const char* section, const char* key, long _default, const char* path) -> long {
     if (!ini_haskey(section, key, path)) {
         ini_putl(section, key, _default, path);
@@ -612,8 +927,14 @@ int main(int argc, char* argv[]) {
     const auto ticks_start = armGetSystemTick();
 
     if (enable_patching) {
-        for (auto& patch : patches) {
-            apply_patch(patch);
+        ModuleID module_ids[std::size(patches)]{};
+        for (u32 i = 0; i < std::size(patches); i++) {
+            apply_patch(patches[i], module_ids[i]);
+        }
+        
+        // Post-processing phase: generate IPS files
+        for (u32 i = 0; i < std::size(patches); i++) {
+            generate_ips_files(patches[i], module_ids[i]);
         }
     }
 
