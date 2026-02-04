@@ -20,17 +20,6 @@ u8 AMS_KEYGEN{}; // set on startup
 u64 AMS_HASH{}; // set on startup
 bool VERSION_SKIP{}; // set on startup
 
-struct DebugEventInfo {
-    u32 event_type;
-    u32 flags;
-    u64 thread_id;
-    u64 title_id;
-    u64 process_id;
-    char process_name[12];
-    u32 mmu_flags;
-    u8 _0x30[0x10];
-};
-
 template<typename T>
 constexpr void hex_to_bytes(const char* s, T* data, u8& size) {
     if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
@@ -487,7 +476,7 @@ auto is_patch_version_valid(const PatchEntry& patch) -> bool {
 }
 
 // Find and open the process with the given title_id
-auto find_process_by_title_id(u64 title_id, Handle& out_handle, DebugEventInfo& out_event_info) -> bool {
+auto find_process_by_title_id(u64 title_id, Handle& out_handle) -> bool {
     u64 pids[0x50]{};
     s32 process_count{};
 
@@ -495,19 +484,23 @@ auto find_process_by_title_id(u64 title_id, Handle& out_handle, DebugEventInfo& 
         return false;
     }
 
-    for (s32 i = 0; i < (process_count - 1); i++) {
+    for (s32 i = 0; i < process_count; i++) {
         Handle handle{};
-        DebugEventInfo event_info{};
+        DebugEventInfo event{};
 
-        if (R_SUCCEEDED(svcDebugActiveProcess(&handle, pids[i])) &&
-            R_SUCCEEDED(svcGetDebugEvent(&event_info, handle)) &&
-            title_id == event_info.title_id) {
-            out_handle = handle;
-            out_event_info = event_info;
-            return true;
-        } else if (handle) {
-            svcCloseHandle(handle);
+        if (R_FAILED(svcDebugActiveProcess(&handle, pids[i]))) {
+            continue;
         }
+
+        if (R_SUCCEEDED(svcGetDebugEvent(reinterpret_cast<DebugEventInfo*>(&event), handle))) {
+            if (event.type == DebugEventType_CreateProcess &&
+                event.info.create_process.program_id == title_id) {
+                out_handle = handle;
+                return true;
+            }
+        }
+
+        svcCloseHandle(handle);
     }
 
     return false;
@@ -566,9 +559,8 @@ auto apply_patch(PatchEntry& patch) -> bool {
     }
 
     Handle handle{};
-    DebugEventInfo event_info{};
 
-    if (!find_process_by_title_id(patch.title_id, handle, event_info)) {
+    if (!find_process_by_title_id(patch.title_id, handle)) {
         return false;
     }
 
