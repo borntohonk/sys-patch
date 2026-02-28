@@ -101,14 +101,14 @@ public:
         list->addItem(new tsl::elm::CategoryHeader("FS - 0100000000000000"));
         list->addItem(config_noacidsigchk1.create_list_item("noacidsigchk_1.0.0-9.2.0"));
         list->addItem(config_noacidsigchk2.create_list_item("noacidsigchk_1.0.0-9.2.0"));
-        list->addItem(config_noncasigchk1.create_list_item("noncasigchk_10.0.0-16.1.0"));
-        list->addItem(config_noncasigchk2.create_list_item("noncasigchk_17.0.0+"));
-        list->addItem(config_nocntchk1.create_list_item("nocntchk_10.0.0-18.1.0"));
-        list->addItem(config_nocntchk2.create_list_item("nocntchk_19.0.0-20.5.0"));
-        list->addItem(config_nocntchk3.create_list_item("nocntchk_21.0.0+"));
+        list->addItem(config_noncasigchk1.create_list_item("noncasigchk_1.0.0-3.0.2"));
+        list->addItem(config_noncasigchk2.create_list_item("noncasigchk_4.0.0-16.1.0"));
+        list->addItem(config_noncasigchk3.create_list_item("noncasigchk_17.0.0+"));
+        list->addItem(config_nocntchk1.create_list_item("nocntchk_1.0.0-18.1.0"));
+        list->addItem(config_nocntchk2.create_list_item("nocntchk_19.0.0+"));
 
         list->addItem(new tsl::elm::CategoryHeader("LDR - 0100000000000001"));
-        list->addItem(config_noacidsigchk3.create_list_item("noacidsigchk_10.0.0+"));
+        list->addItem(config_noacidsigchk4.create_list_item("noacidsigchk_10.0.0+"));
 
         list->addItem(new tsl::elm::CategoryHeader("ERPT - 010000000000002B"));
         list->addItem(config_no_erpt.create_list_item("no_erpt"));
@@ -141,12 +141,12 @@ public:
 
     ConfigEntry config_noacidsigchk1{"fs", "noacidsigchk_1.0.0-9.2.0", true};
     ConfigEntry config_noacidsigchk2{"fs", "noacidsigchk_1.0.0-9.2.0", true};
-    ConfigEntry config_noncasigchk1{"fs", "noncasigchk_10.0.0-16.1.0", true};
-    ConfigEntry config_noncasigchk2{"fs", "noncasigchk_17.0.0+", true};
-    ConfigEntry config_nocntchk1{"fs", "nocntchk_10.0.0-18.1.0", true};
-    ConfigEntry config_nocntchk2{"fs", "nocntchk_19.0.0-20.5.0", true};
-    ConfigEntry config_nocntchk3{"fs", "nocntchk_21.0.0+", true};
-    ConfigEntry config_noacidsigchk3{"ldr", "noacidsigchk_10.0.0+", true};
+    ConfigEntry config_noncasigchk1{"fs", "noncasigchk_1.0.0-3.0.2", true};
+    ConfigEntry config_noncasigchk2{"fs", "noncasigchk_4.0.0-16.1.0", true};
+    ConfigEntry config_noncasigchk3{"fs", "noncasigchk_17.0.0+", true};
+    ConfigEntry config_nocntchk1{"fs", "nocntchk_1.0.0-18.1.0", true};
+    ConfigEntry config_nocntchk2{"fs", "nocntchk_19.0.0+", true};
+    ConfigEntry config_noacidsigchk4{"ldr", "noacidsigchk_10.0.0+", true};
     ConfigEntry config_no_erpt{"erpt", "no_erpt", true};
     ConfigEntry config_es1{"es", "es_1.0.0-8.1.1", true};
     ConfigEntry config_es2{"es", "es_9.0.0-11.0.1", true};
@@ -198,17 +198,21 @@ public:
                 #undef F
 
                 if (value.starts_with("Patched")) {
-                    if (value.ends_with("(sys-patch)")) {
-                        user->list->addItem(new tsl::elm::ListItem(Key, "Patched", colour_syspatch));
-                    } else {
-                        user->list->addItem(new tsl::elm::ListItem(Key, "Patched", colour_file));
-                    }
+                    auto *item = new tsl::elm::ListItem(Key);
+                    item->setValue("Patched", true);
+                    user->list->addItem(item);
                 } else if (value.starts_with("Unpatched") || value.starts_with("Disabled")) {
-                    user->list->addItem(new tsl::elm::ListItem(Key, Value, colour_unpatched));
+                    auto *item = new tsl::elm::ListItem(Key);
+                    item->setValue(Value, true);
+                    user->list->addItem(item);
                 } else if (user->last_section == "stats") {
-                    user->list->addItem(new tsl::elm::ListItem(Key, Value, tsl::style::color::ColorDescription));
+                    auto *item = new tsl::elm::ListItem(Key);
+                    item->setValue(Value, true);
+                    user->list->addItem(item);
                 } else {
-                    user->list->addItem(new tsl::elm::ListItem(Key, Value, tsl::style::color::ColorText));
+                    auto *item = new tsl::elm::ListItem(Key);
+                    item->setValue(Value, true);
+                    user->list->addItem(item);
                 }
 
                 return 1;

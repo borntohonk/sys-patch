@@ -20,56 +20,99 @@ u8 AMS_KEYGEN{}; // set on startup
 u64 AMS_HASH{}; // set on startup
 bool VERSION_SKIP{}; // set on startup
 
-struct DebugEventInfo {
-    u32 event_type;
-    u32 flags;
-    u64 thread_id;
-    u64 title_id;
-    u64 process_id;
-    char process_name[12];
-    u32 mmu_flags;
-    u8 _0x30[0x10];
-};
-
 template<typename T>
-constexpr void str2hex(const char* s, T* data, u8& size) {
-    // skip leading 0x (if any)
-    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
-        s += 2;
-    }
+constexpr void hex_to_bytes(const char* s, T* data, u8& size) {
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
 
-    // invalid string will cause a compile-time error due to no return
-    constexpr auto hexstr_2_nibble = [](char c) -> u8 {
-        if (c >= 'A' && c <= 'F') { return c - 'A' + 10; }
-        if (c >= 'a' && c <= 'f') { return c - 'a' + 10; }
-        if (c >= '0' && c <= '9') { return c - '0'; }
+    constexpr auto nibble = [](char c) -> u8 {
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= '0' && c <= '9') return c - '0';
+        return 0;
     };
 
-    // parse and convert string
-    while (*s != '\0') {
-        if (sizeof(T) == sizeof(u16) && *s == '.') {
-            data[size] = REGEX_SKIP;
-            s++;
+    while (*s) {
+        u8 high = nibble(*s++);
+        u8 low  = nibble(*s++);
+        data[size++] = (high << 4) | low;
+    }
+}
+
+template<typename T>
+constexpr void pattern_to_bytes(const char* s, T* data, u8& size) {
+    if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+
+    constexpr auto nibble = [](char c) -> u8 {
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= '0' && c <= '9') return c - '0';
+        return 0xFF; // invalid → will fail match
+    };
+
+    while (*s) {
+        if (*s == '.') {
+            u8 dot_count = 0;
+            while (s[dot_count] == '.') ++dot_count;
+
+            u8 wildcards = dot_count / 2;
+
+            for (u8 i = 0; i < wildcards; ++i) {
+                data[size++] = REGEX_SKIP;
+            }
+
+            s += dot_count;
+
         } else {
-            data[size] |= hexstr_2_nibble(*s++) << 4;
-            data[size] |= hexstr_2_nibble(*s++) << 0;
+            u16 value = 0;
+            bool is_wild_high = false;
+            bool is_wild_low  = false;
+
+            // High nibble
+            if (*s == '?') {
+                is_wild_high = true;
+                ++s;
+            } else {
+                value |= nibble(*s++) << 8;
+            }
+
+            // Low nibble
+            if (*s == '?') {
+                is_wild_low = true;
+                ++s;
+            } else {
+                value |= nibble(*s++);
+            }
+
+            if (is_wild_high && is_wild_low) {
+                // ?? → full byte wildcard (same as ..)
+                data[size++] = REGEX_SKIP;
+            } else if (is_wild_high || is_wild_low) {
+                // Partial match: store value with high bit set to indicate mask needed
+                // We'll use: if value >= 0x100 → it's a masked byte
+                // value & 0xFF = actual byte, value >> 8 = mask (0xF0 or 0x0F)
+                u8 actual = value & 0xFF;
+                u8 mask   = is_wild_high ? 0x0F : 0xF0;
+                data[size++] = actual | (static_cast<u16>(mask) << 8);
+            } else {
+                // Exact byte
+                data[size++] = value;
+            }
         }
-        size++;
     }
 }
 
 struct PatternData {
     constexpr PatternData(const char* s) {
-        str2hex(s, data, size);
+        pattern_to_bytes(s, data, size);
     }
 
-    u16 data[60]{}; // reasonable max pattern length, adjust as needed
+    u16 data[60]{};
     u8 size{};
 };
 
 struct PatchData {
     constexpr PatchData(const char* s) {
-        str2hex(s, data, size);
+        hex_to_bytes(s, data, size);
     }
 
     template<typename T>
@@ -84,7 +127,7 @@ struct PatchData {
         return !std::memcmp(data, _data, size);
     }
 
-    u8 data[20]{}; // reasonable max patch length, adjust as needed
+    u8 data[20]{};
     u8 size{};
 };
 
@@ -235,14 +278,40 @@ constexpr auto ctest_applied(const u8* data, u32 inst) -> bool {
     return ctest_patch(inst).cmp(data);
 }
 
+// Note: Patterns can compose of byte wildcards represented as ".." or "??". Patterns can also consist of high, or low nibble wildcarding, represented, with the example being wildcarded being "A9" as "A?" or "?9".
+// example 1: just byte wildcarding:
+// C8FE4739 -> C8....39 = 2 bytes wildcarded
+// C8FE4739 -> C8????39 = 2 bytes wildcarded
+// C8FE4739 -> C?F?4??9 = 4 nibbles wildcarded
+// nibble wildcarding must be done with "?", and must not be mixed with ".", ".." should be used when wildcarding an entire byte, or "??", but not a mix of "?." or ".?"
+// a pattern can contain both "..", "??", or nibble wildcarding, as long as one does not mix "?." or "?."
+// patterns should be optimized in such a manner that they yield only one result.
+// patterns might yield results for more firmware versions, but if it yields more than one result (per firmware version), it should be condensed to near similar versions instead which only yields one result.
+// a pattern should not contain the bytes being patched, they should be wildcarded.
+// if the bytes being patched align with the patch partially, then the partial bytes can be in the pattern, the same applies to if the pattern contains the length of the patch.
+// the bytes being tested are defined by the _cond, and does not need to be in the pattern, and shouldn't be in the pattern, if the bytes being tested are also the bytes being patched.
+// () indicate testing, {} indicate what is being patched
+// example:
+// "0x00....0240F9........E8", 6, 0,
+// the bytes being tested, and patch size is the same, 6 from start of pattern, then patch 0 from start of where the test was designated:
+// "0x00....0240F9{(........)}E8"
+// if moving the head from what is being tested, the bytes, if in pattern, should be wildcarded by the length of the patch being applied
+// "0x00....0240F9........E8C8FE4739", 6, 4,
+// example {} should be wildcarded, as those are the bytes being patched, the bytes being tested can in that context contain bytes in the pattern:
+// "0x00....0240F9(......94){E8C8FE47}39", 6, 4,
+// example with wildcarding:
+// "0x00....0240F9(......94){........}39", 6, 4,
+//
+// designing new patterns should ideally conform to specification above.
+
 constinit Patterns fs_patterns[] = {
     { "noacidsigchk_1.0.0-9.2.0", "0xC8FE4739", -24, 0, bl_cond, ret0_patch, ret0_applied, true, FW_VER_ANY, MAKEHOSVERSION(9,2,0) }, // moved to loader 10.0.0
     { "noacidsigchk_1.0.0-9.2.0", "0x0210911F000072", -5, 0, bl_cond, ret0_patch, ret0_applied, true, FW_VER_ANY, MAKEHOSVERSION(9,2,0) }, // moved to loader 10.0.0
-    { "noncasigchk_10.0.0-16.1.0", "0x1E48391F.0071..0054", -17, 0, tbz_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(10,0,0), MAKEHOSVERSION(16,1,0) },
-    { "noncasigchk_17.0.0+", "0x0694..00.42.0091", -18, 0, tbz_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(17,0,0), FW_VER_ANY },
-    { "nocntchk_10.0.0-18.1.0", "0x00..0240F9....08.....00...00...0037", 6, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(10,0,0), MAKEHOSVERSION(18,1,0) },
-    { "nocntchk_19.0.0-20.5.0", "0x00..0240F9....08.....00...00...0054", 6, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(19,0,0), MAKEHOSVERSION(20,5,0) },
-    { "nocntchk_21.0.0+", "0x00..0240F9....E8.....00...00...0054", 6, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(21,0,0), FW_VER_ANY },
+    { "noncasigchk_1.0.0-3.0.2", "0x88..42..58", -4, 0, tbz_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(1,0,0), MAKEHOSVERSION(3,0,2) },
+    { "noncasigchk_4.0.0-16.1.0", "0x1E4839....00......0054", -17, 0, tbz_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(4,0,0), MAKEHOSVERSION(16,1,0) },
+    { "noncasigchk_17.0.0+", "0x0694....00..42..0091", -18, 0, tbz_cond, nop_patch, nop_applied, true, MAKEHOSVERSION(17,0,0), FW_VER_ANY },
+    { "nocntchk_1.0.0-18.1.0", "0x40F9........081C00121F05", 2, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(1,0,0), MAKEHOSVERSION(18,1,0) },
+    { "nocntchk_19.0.0+", "0x40F9............40B9091C", 2, 0, bl_cond, ret0_patch, ret0_applied, true, MAKEHOSVERSION(19,0,0), FW_VER_ANY },
 };
 
 constinit Patterns ldr_patterns[] = {
@@ -250,33 +319,34 @@ constinit Patterns ldr_patterns[] = {
 };
 
 constinit Patterns erpt_patterns[] = {
-    { "no_erpt", "0x...D1FD7B02A9FD830091F76305A9", 0, 0, sub_cond, mov0_ret_patch, mov0_ret_applied, true, FW_VER_ANY }, // FF4305D1 - sub sp, sp, #0x150 patched to E0031F2AC0035FD6 - mov w0, wzr, ret 
+    { "no_erpt", "0xFD7B02A9FD830091F76305A9", -4, 0, sub_cond, mov0_ret_patch, mov0_ret_applied, true, FW_VER_ANY }, // FF4305D1 - sub sp, sp, #0x150 patched to E0031F2AC0035FD6 - mov w0, wzr, ret 
 };
 
 constinit Patterns es_patterns[] = {
-    { "es_1.0.0-8.1.1", "0x....E8.00...FF97.0300AA..00.....E0.0091..0094.7E4092.......A9", 36, 0, es_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(1,0,0), MAKEHOSVERSION(8,1,1) },
-    { "es_9.0.0-11.0.1", "0x00...............00.....A0..D1...97.......A9", 30, 0, es_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(9,0,0), MAKEHOSVERSION(11,0,1) },
-    { "es_12.0.0-18.1.0", "0x02.00...........00...00.....A0..D1...97.......A9", 32, 0, es_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(12,0,0), MAKEHOSVERSION(18,1,0) },
-    { "es_19.0.0+", "0xA1.00...........00...00.....A0..D1...97.......A9", 32, 0, es_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(19,0,0), FW_VER_ANY },
+    { "es_1.0.0-8.1.1", "0x0091....0094..7E4092", 10, 0, es_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(1,0,0), MAKEHOSVERSION(8,1,1) },
+    { "es_9.0.0-11.0.1", "0x00..........A0....D1....FF97", 14, 0, es_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(9,0,0), MAKEHOSVERSION(11,0,1) },
+    { "es_12.0.0-18.1.0", "0x02........D2..52....0091", 32, 0, es_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(12,0,0), MAKEHOSVERSION(18,1,0) },
+    { "es_19.0.0+", "0xA1........031F2A....0091", 32, 0, es_cond, mov0_patch, mov0_applied, true, MAKEHOSVERSION(19,0,0), FW_VER_ANY },
 };
 
 constinit Patterns olsc_patterns[] = {
-    { "olsc_6.0.0-14.1.2", "0x00.73..F968024039..00...00", 42, 0, bl_cond, ret1_patch, ret1_applied, true, MAKEHOSVERSION(6,0,0), MAKEHOSVERSION(14,1,2) },
-    { "olsc_15.0.0-18.1.0", "0x00.73..F968024039..00...00", 38, 0, bl_cond, ret1_patch, ret1_applied, true, MAKEHOSVERSION(15,0,0), MAKEHOSVERSION(18,1,0) },
-    { "olsc_19.0.0+", "0x00.73..F968024039..00...00", 42, 0, bl_cond, ret1_patch, ret1_applied, true, MAKEHOSVERSION(19,0,0), FW_VER_ANY },
+    { "olsc_6.0.0-14.1.2", "0x00..73....F9....4039", 42, 0, bl_cond, ret1_patch, ret1_applied, true, MAKEHOSVERSION(6,0,0), MAKEHOSVERSION(14,1,2) },
+    { "olsc_15.0.0-18.1.0", "0x00..73....F9....4039", 38, 0, bl_cond, ret1_patch, ret1_applied, true, MAKEHOSVERSION(15,0,0), MAKEHOSVERSION(18,1,0) },
+    { "olsc_19.0.0+", "0x00..73....F9....4039", 42, 0, bl_cond, ret1_patch, ret1_applied, true, MAKEHOSVERSION(19,0,0), FW_VER_ANY },
 };
 
 constinit Patterns nifm_patterns[] = {
-    { "ctest_1.0.0-19.0.1", "0x03.AAE003.AA...39..04F8....E0", -29, 0, ctest_cond, ctest_patch, ctest_applied, true, FW_VER_ANY, MAKEHOSVERSION(18,1,0) },
-    { "ctest_20.0.0+", "0x03.AA...AA.........0314AA..14AA", -17, 0, ctest_cond, ctest_patch, ctest_applied, true, MAKEHOSVERSION(20,0,0), FW_VER_ANY },
+    { "ctest_1.0.0-19.0.1", "0x03..AAE003..AA......39....04F8........E0", -29, 0, ctest_cond, ctest_patch, ctest_applied, true, FW_VER_ANY, MAKEHOSVERSION(19,0,1) },
+    { "ctest_20.0.0+", "0x03..AA......AA..................0314AA....14AA", -17, 0, ctest_cond, ctest_patch, ctest_applied, true, MAKEHOSVERSION(20,0,0), FW_VER_ANY },
 };
 
 constinit Patterns nim_patterns[] = {
-    { "blankcal0crashfix_17.0.0+", "0x00351F2003D5...............97..0094..00.....61", 6, 0, adr_cond, mov2_patch, mov2_applied, true, MAKEHOSVERSION(17,0,0), FW_VER_ANY },
-    { "blockfirmwareupdates_1.0.0-5.1.0", "0x1139F30301AA81.40F9E0.1191", -30, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(1,0,0), MAKEHOSVERSION(5,1,0) },
-    { "blockfirmwareupdates_6.0.0-6.2.0", "0xF30301AA.4E40F9E0..91", -40, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(6,0,0), MAKEHOSVERSION(6,2,0) },
-    { "blockfirmwareupdates_7.0.0-11.0.1", "0xF30301AA014C40F9F40300AAE0..91", -36, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(7,0,0), MAKEHOSVERSION(11,0,1) },
-    { "blockfirmwareupdates_12.0.0+", "0x280841F9084C00F9E0031F.C0035FD6", 16, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(12,0,0), FW_VER_ANY },
+    { "blankcal0crashfix_17.0.0+", "0x00351F2003D5..............................97....0094....00..........61", 6, 0, adr_cond, mov2_patch, mov2_applied, true, MAKEHOSVERSION(17,0,0), FW_VER_ANY },
+    { "blockfirmwareupdates_1.0.0-5.1.0", "0x1139F3", -30, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(1,0,0), MAKEHOSVERSION(5,1,0) },
+    { "blockfirmwareupdates_6.0.0-6.2.0", "0xF30301AA..4E", -40, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(6,0,0), MAKEHOSVERSION(6,2,0) },
+    { "blockfirmwareupdates_7.0.0-10.2.0", "0xF30301AA014C", -36, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(7,0,0), MAKEHOSVERSION(10,2,0) },
+    { "blockfirmwareupdates_11.0.0-11.0.1", "0x9AF0....................C0035FD6", 16, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(11,0,0), MAKEHOSVERSION(11,0,1) },
+    { "blockfirmwareupdates_12.0.0+", "0x41....4C............C0035FD6", 14, 0, block_fw_updates_cond, mov0_ret_patch, mov0_ret_applied, true, MAKEHOSVERSION(12,0,0), FW_VER_ANY },
 };
 
 // NOTE: add system titles that you want to be patched to this table.
@@ -336,7 +406,9 @@ void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::spa
             continue;
         }
 
-        for (u32 i = 0; i < data_size; i++) {
+        // Try to find and apply this pattern
+        bool found = false;
+        for (u32 i = 0; i < data_size && !found; i++) {
             if (i + p.byte_pattern.size >= data_size) {
                 break;
             }
@@ -345,8 +417,22 @@ void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::spa
             // skipping over any bytes if the value is REGEX_SKIP
             u32 count{};
             while (count < p.byte_pattern.size) {
-                if (p.byte_pattern.data[count] != data[i + count] && p.byte_pattern.data[count] != REGEX_SKIP) {
-                    break;
+                u16 pattern_entry = p.byte_pattern.data[count];
+                u8 memory_byte    = data[i + count];
+
+                if (pattern_entry == REGEX_SKIP) {
+                    // full wildcard — always matches
+                } else if (pattern_entry > 0xFF) {
+                    // masked nibble match
+                    u8 expected = pattern_entry & 0xFF;
+                    u8 mask     = pattern_entry >> 8;
+                    if ((memory_byte & mask) != (expected & mask)) {
+                        break;
+                    }
+                } else {
+                    if (memory_byte != pattern_entry) {
+                        break;
+                    }
                 }
                 count++;
             }
@@ -369,12 +455,101 @@ void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::spa
                     } else {
                         p.result = PatchResult::PATCHED_SYSPATCH;
                     }
-                    // move onto next pattern
-                    break;
+                    found = true;
                 } else if (p.applied(data + inst_offset + p.patch_offset, inst)) {
                     // patch already applied by sigpatches
                     p.result = PatchResult::PATCHED_FILE;
-                    break;
+                    found = true;
+                }
+            }
+        }
+    }
+}
+
+// Check if a patch entry is valid for the current firmware version
+auto is_patch_version_valid(const PatchEntry& patch) -> bool {
+    if (!VERSION_SKIP) {
+        return true;
+    }
+    return !(patch.min_fw_ver && patch.min_fw_ver > FW_VERSION) &&
+           !(patch.max_fw_ver && patch.max_fw_ver < FW_VERSION);
+}
+
+
+
+
+// Find and open the process with the given title_id
+auto find_process_by_title_id(u64 title_id, Handle& out_handle) -> bool {
+    u64 pids[0x50]{};
+    s32 process_count{};
+
+    if (R_FAILED(svcGetProcessList(&process_count, pids, 0x50))) {
+        return false;
+    }
+
+    for (s32 i = 0; i < process_count; i++) {
+        Handle handle{};
+        #ifdef USE_DEBUG_EVENT
+            DebugEvent event{};
+        #else
+            DebugEventInfo event{};
+        #endif
+
+        if (R_FAILED(svcDebugActiveProcess(&handle, pids[i]))) {
+            continue;
+        }
+
+        if (R_SUCCEEDED(svcGetDebugEvent(&event, handle))) {
+            if (event.type == DebugEventType_CreateProcess &&
+                event.info.create_process.program_id == title_id) {
+                out_handle = handle;
+                return true;
+            }
+        }
+
+        svcCloseHandle(handle);
+    }
+
+    return false;
+}
+
+// Patch all executable memory regions in a process
+auto patch_process_memory(Handle handle, const PatchEntry& patch, u8* buffer, u64 overlap_size) -> void {
+    MemoryInfo mem_info{};
+    u64 addr{};
+    u32 page_info{};
+
+    for (;;) {
+        if (R_FAILED(svcQueryDebugProcessMemory(&mem_info, &page_info, handle, addr))) {
+            break;
+        }
+        addr = mem_info.addr + mem_info.size;
+
+        // if addr=0 then we hit the reserved memory section
+        if (!addr) {
+            break;
+        }
+        // skip memory that we don't want
+        if (!mem_info.size || (mem_info.perm & Perm_Rx) != Perm_Rx || ((mem_info.type & 0xFF) != MemType_CodeStatic)) {
+            continue;
+        }
+
+        // Process this memory region in chunks
+        for (u64 sz = 0; sz < mem_info.size; sz += READ_BUFFER_SIZE - overlap_size) {
+            const auto actual_size = std::min(READ_BUFFER_SIZE, mem_info.size - sz);
+            if (R_FAILED(svcReadDebugProcessMemory(buffer + overlap_size, handle, mem_info.addr + sz, actual_size))) {
+                break;
+            } else {
+                patcher(handle, buffer, actual_size + overlap_size, mem_info.addr + sz - overlap_size, patch.patterns);
+                
+                // Manage overlap buffer for next iteration
+                if (actual_size >= overlap_size) {
+                    memcpy(buffer, buffer + READ_BUFFER_SIZE, overlap_size);
+                    std::memset(buffer + overlap_size, 0, READ_BUFFER_SIZE);
+                } else {
+                    const auto bytes_to_overlap = std::min<u64>(overlap_size, actual_size);
+                    memcpy(buffer, buffer + READ_BUFFER_SIZE + (actual_size - bytes_to_overlap), bytes_to_overlap);
+                    std::memset(buffer + bytes_to_overlap, 0, sizeof(buffer) - bytes_to_overlap);
                 }
             }
         }
@@ -382,79 +557,28 @@ void patcher(Handle handle, const u8* data, size_t data_size, u64 addr, std::spa
 }
 
 auto apply_patch(PatchEntry& patch) -> bool {
-    Handle handle{};
-    DebugEventInfo event_info{};
-
-    u64 pids[0x50]{};
-    s32 process_count{};
-    constexpr u64 overlap_size = 0x4f;
-    static u8 buffer[READ_BUFFER_SIZE + overlap_size];
-
-    std::memset(buffer, 0, sizeof(buffer));
-
     // skip if version isn't valid
-    if (VERSION_SKIP &&
-        ((patch.min_fw_ver && patch.min_fw_ver > FW_VERSION) ||
-        (patch.max_fw_ver && patch.max_fw_ver < FW_VERSION))) {
+    if (!is_patch_version_valid(patch)) {
         for (auto& p : patch.patterns) {
             p.result = PatchResult::SKIPPED;
         }
         return true;
     }
 
-    if (R_FAILED(svcGetProcessList(&process_count, pids, 0x50))) {
+    Handle handle{};
+
+    if (!find_process_by_title_id(patch.title_id, handle)) {
         return false;
     }
 
-    for (s32 i = 0; i < (process_count - 1); i++) {
-        if (R_SUCCEEDED(svcDebugActiveProcess(&handle, pids[i])) &&
-            R_SUCCEEDED(svcGetDebugEvent(&event_info, handle)) &&
-            patch.title_id == event_info.title_id) {
-            MemoryInfo mem_info{};
-            u64 addr{};
-            u32 page_info{};
+    constexpr u64 overlap_size = 0x4f;
+    static u8 buffer[READ_BUFFER_SIZE + overlap_size];
+    std::memset(buffer, 0, sizeof(buffer));
 
-            for (;;) {
-                if (R_FAILED(svcQueryDebugProcessMemory(&mem_info, &page_info, handle, addr))) {
-                    break;
-                }
-                addr = mem_info.addr + mem_info.size;
-
-                // if addr=0 then we hit the reserved memory section
-                if (!addr) {
-                    break;
-                }
-                // skip memory that we don't want
-                if (!mem_info.size || (mem_info.perm & Perm_Rx) != Perm_Rx || ((mem_info.type & 0xFF) != MemType_CodeStatic)) {
-                    continue;
-                }
-
-                for (u64 sz = 0; sz < mem_info.size; sz += READ_BUFFER_SIZE - overlap_size) {
-                    const auto actual_size = std::min(READ_BUFFER_SIZE, mem_info.size - sz);
-                    if (R_FAILED(svcReadDebugProcessMemory(buffer + overlap_size, handle, mem_info.addr + sz, actual_size))) {
-                        break;
-                    } else {
-                        patcher(handle, buffer, actual_size + overlap_size, mem_info.addr + sz - overlap_size, patch.patterns);
-                        if (actual_size >= overlap_size) {
-                            memcpy(buffer, buffer + READ_BUFFER_SIZE, overlap_size);
-                            std::memset(buffer + overlap_size, 0, READ_BUFFER_SIZE);
-                        } else {
-                            const auto bytes_to_overlap = std::min<u64>(overlap_size, actual_size);
-                            memcpy(buffer, buffer + READ_BUFFER_SIZE + (actual_size - bytes_to_overlap), bytes_to_overlap);
-                            std::memset(buffer + bytes_to_overlap, 0, sizeof(buffer) - bytes_to_overlap);
-                        }
-                    }
-                }
-            }
-            svcCloseHandle(handle);
-            return true;
-        } else if (handle) {
-            svcCloseHandle(handle);
-            handle = 0;
-        }
-    }
-
-    return false;
+    patch_process_memory(handle, patch, buffer, overlap_size);
+    
+    svcCloseHandle(handle);
+    return true;
 }
 
 // creates a directory, non-recursive!
