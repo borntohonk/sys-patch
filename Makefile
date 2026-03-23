@@ -1,4 +1,4 @@
-MAKEFILES	:=	sysmod overlay
+MAKEFILES	:=	sysmod
 TARGETS		:= $(foreach dir,$(MAKEFILES),$(CURDIR)/$(dir))
 
 # the below was taken from atmosphere + switch-examples makefile
@@ -37,7 +37,6 @@ export CUSTOM_DEFINES := -DVERSION=\"v$(VERSION)\" \
 all: $(TARGETS)
 	@mkdir -p out/
 	@cp -R sysmod/out/* out/
-	@cp -R overlay/out/* out/
 
 .PHONY: $(TARGETS)
 
